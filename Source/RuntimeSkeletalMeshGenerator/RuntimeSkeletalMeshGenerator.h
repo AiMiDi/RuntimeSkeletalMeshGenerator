@@ -1,5 +1,5 @@
 /******************************************************************************/
-/* SkeletalMeshComponent Generator for UE4.27                                 */
+/* SkeletalMeshComponent Generator for UE5.03                                 */
 /* -------------------------------------------------------------------------- */
 /* License MIT                                                                */
 /* Kindly sponsored by IMVU                                                   */
@@ -15,7 +15,6 @@
 #include "CoreMinimal.h"
 #include "Modules/ModuleManager.h"
 #include "Components/SkeletalMeshComponent.h"
-#include "Rendering/SkeletalMeshLODImporterData.h"
 #include "Rendering/SkeletalMeshRenderData.h"
 
 /**
@@ -33,12 +32,12 @@ struct RUNTIMESKELETALMESHGENERATOR_API FRawBoneInfluence
  */
 struct RUNTIMESKELETALMESHGENERATOR_API FMeshSurface
 {
-	TArray<FVector> Vertices;
-	TArray<FVector> Tangents;
+	TArray<FVector3f> Vertices;
+	TArray<FVector3f> Tangents;
 	TArray<bool> FlipBinormalSigns;
-	TArray<FVector> Normals;
+	TArray<FVector3f> Normals;
 	TArray<FColor> Colors;
-	TArray<TArray<FVector2D>> Uvs;
+	TArray<TArray<FVector2f>> Uvs;
 	TArray<TArray<FRawBoneInfluence>> BoneInfluences;
 	TArray<uint32> Indices;
 };
@@ -52,6 +51,17 @@ public: // ------------------------------------- IModuleInterface implementation
 
 class RUNTIMESKELETALMESHGENERATOR_API FRuntimeSkeletalMeshGenerator
 {
+	static void FillBufferWithMeshSurface(
+		const TArray<FMeshSurface>& Surfaces,
+		const int32 UVCount,
+		bool& bUse16BitBoneIndex,
+		int32& MaxBoneInfluences,
+		TArray<uint32>& SurfaceVertexOffsets,
+		TArray<uint32>& SurfaceIndexOffsets,
+		TArray<FStaticMeshBuildVertex>& StaticVertices,
+		TArray<uint32>& VertexSurfaceIndex,
+		TArray<FVector>& Vertices,
+		TArray<uint32>& Indices);
 public: // ----------------------------------------------------------------- API
 	/**
 	 * Generate the `SkeletalMesh` for the given surfaces.
