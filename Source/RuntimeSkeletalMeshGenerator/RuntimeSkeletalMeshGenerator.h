@@ -33,13 +33,13 @@ struct RUNTIMESKELETALMESHGENERATOR_API FRawBoneInfluence
 struct RUNTIMESKELETALMESHGENERATOR_API FMeshSurface
 {
 	TArray<FVector3f> Vertices;
+	TArray<uint32> Indices;
 	TArray<FVector3f> Tangents;
-	TArray<bool> FlipBinormalSigns;
 	TArray<FVector3f> Normals;
+	TArray<bool> FlipBinormalSigns;
 	TArray<FColor> Colors;
 	TArray<TArray<FVector2f>> Uvs;
 	TArray<TArray<FRawBoneInfluence>> BoneInfluences;
-	TArray<uint32> Indices;
 };
 
 class FRuntimeSkeletalMeshGeneratorModule : public IModuleInterface
@@ -66,7 +66,7 @@ public: // ----------------------------------------------------------------- API
 	/**
 	 * Generate the `SkeletalMesh` for the given surfaces.
 	 */
-	static void GenerateSkeletalMesh(
+	static bool GenerateSkeletalMesh(
 		USkeletalMesh* SkeletalMesh,
 		const TArray<FMeshSurface>& Surfaces,
 		const TArray<UMaterialInterface*>& SurfacesMaterial,

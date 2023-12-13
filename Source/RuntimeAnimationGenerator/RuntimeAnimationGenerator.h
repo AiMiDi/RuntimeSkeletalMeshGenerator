@@ -79,7 +79,7 @@ public:
 	};
 
 public:
-	static void PrepareTracks(USkeleton* Skeleton, FTracks& OutTracks);
+	static void PrepareTracks(const USkeleton* Skeleton, FTracks& OutTracks);
 
 	/// Generates a new `AnimSequence` using the passed Tracks.
 	/// Note, it's important to use `PrepareTracks` just before using this function.

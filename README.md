@@ -7,7 +7,7 @@ You can just pass all the surfaces' data, this library will take care to correct
 ## How to use it
 
 To use this library:
-1. Add this plugin inside the UE4 game plugins folder.
+1. Add this plugin inside the UE5 game plugins folder.
 2. Specify `RuntimeSkeletalMeshGenerator` as plugin on your `Game.uproject`, to enable it.
 3. Import the plugin using `#include "RuntimeSkeletalMeshGenerator/RuntimeSkeletalMeshGenerator.h"`
 

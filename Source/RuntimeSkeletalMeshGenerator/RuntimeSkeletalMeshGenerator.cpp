@@ -74,6 +74,8 @@ void FRuntimeSkeletalMeshGenerator::FillBufferWithMeshSurface(
 
 	uint32 VerticesOffset = 0;
 	uint32 IndicesOffset = 0;
+	SurfaceVertexOffsets.SetNum(Surfaces.Num());
+	SurfaceIndexOffsets.SetNum(Surfaces.Num());
 	for (int32 I = 0; I < Surfaces.Num(); I++)
 	{
 		const FMeshSurface& Surface = Surfaces[I];
@@ -115,7 +117,7 @@ void FRuntimeSkeletalMeshGenerator::FillBufferWithMeshSurface(
 	}
 }
 
-void FRuntimeSkeletalMeshGenerator::GenerateSkeletalMesh(
+bool FRuntimeSkeletalMeshGenerator::GenerateSkeletalMesh(
 	USkeletalMesh* SkeletalMesh,
 	const TArray<FMeshSurface>& Surfaces,
 	const TArray<UMaterialInterface*>& SurfacesMaterial,
@@ -130,22 +132,19 @@ void FRuntimeSkeletalMeshGenerator::GenerateSkeletalMesh(
 	FSkeletalMeshImportData ImportedModelData;
 #endif
 
-	TArray<uint32> SurfaceVertexOffsets;
-	TArray<uint32> SurfaceIndexOffsets;
-	SurfaceVertexOffsets.SetNum(Surfaces.Num());
-	SurfaceIndexOffsets.SetNum(Surfaces.Num());
-
 	bool bUse16BitBoneIndex = false;
 	int32 MaxBoneInfluences = 0;
 	const int32 UVCount = Surfaces.Num() > 0 ? (Surfaces[0].Uvs.Num() > 0 ? Surfaces[0].Uvs[0].Num() : 0) : 0;
 
 	// Collect all the vertices and index for each surface.
+	TArray<uint32> SurfaceVertexOffsets;
+	TArray<uint32> SurfaceIndexOffsets;
 	TArray<FStaticMeshBuildVertex> StaticVertices;
 	TArray<uint32> VertexSurfaceIndex;
 	TArray<FVector> Vertices;
 	TArray<uint32> Indices;
 	
-	FillBufferWithMeshSurface(Surfaces, SurfaceVertexOffsets, SurfaceIndexOffsets, bUse16BitBoneIndex, MaxBoneInfluences, UVCount, StaticVertices, VertexSurfaceIndex, Vertices, Indices);
+	FillBufferWithMeshSurface(Surfaces, UVCount, bUse16BitBoneIndex, MaxBoneInfluences, SurfaceVertexOffsets, SurfaceIndexOffsets, StaticVertices, VertexSurfaceIndex, Vertices, Indices);
 
 
 #if WITH_EDITORONLY_DATA
@@ -239,7 +238,7 @@ void FRuntimeSkeletalMeshGenerator::GenerateSkeletalMesh(
 			}
 		}
 
-		// At this point it's sure all the bones are initialized, finish the process
+		// At this point it's certain all the bones are initialized, finish the process
 		// by setting the local transform.
 		for (int32 i = 0; i < BoneNum; i += 1)
 		{
@@ -269,7 +268,9 @@ void FRuntimeSkeletalMeshGenerator::GenerateSkeletalMesh(
 	SkeletalMesh->AllocateResourceForRendering();
 	FSkeletalMeshRenderData* MeshRenderData = SkeletalMesh->GetResourceForRendering();
 
-	TObjectPtr<FSkeletalMeshLODRenderData> LODMeshRenderData = NewObject<FSkeletalMeshLODRenderData>();
+	const TObjectPtr<FSkeletalMeshLODRenderData> LODMeshRenderData = NewObject<FSkeletalMeshLODRenderData>();
+	if(!LODMeshRenderData)
+		return false;
 	MeshRenderData->LODRenderData.Add(LODMeshRenderData);
 
 	SkeletalMesh->ResetLODInfo();
@@ -373,7 +374,7 @@ void FRuntimeSkeletalMeshGenerator::GenerateSkeletalMesh(
 		}
 
 		{
-			// In Editor we want to make sure the data is in sync between
+			// In Editor, we want to make sure the data is in sync between
 			// `UserSectionsData` and RenderSections.
 			FSkelMeshSourceSectionUserData& UserSectionData = SkeletalMeshLODModel->UserSectionsData.FindOrAdd(I);
 			UserSectionData.bDisabled = MeshSection.bDisabled;
@@ -591,6 +592,7 @@ void FRuntimeSkeletalMeshGenerator::GenerateSkeletalMesh(
 	// if you don't set this random crashes occur.
 	SkeletalMesh->StackPostEditChange();
 #endif
+	return true;
 }
 
 USkeletalMeshComponent* FRuntimeSkeletalMeshGenerator::GenerateSkeletalMeshComponent(

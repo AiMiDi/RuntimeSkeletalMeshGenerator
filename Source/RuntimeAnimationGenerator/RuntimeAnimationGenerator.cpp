@@ -26,7 +26,7 @@ void FRuntimeAnimationGeneratorModule::ShutdownModule()
 
 IMPLEMENT_MODULE(FRuntimeAnimationGeneratorModule, RuntimeAnimationGenerator)
 
-void FRuntimeAnimationGenerator::PrepareTracks(USkeleton* Skeleton, FTracks& OutTracks)
+void FRuntimeAnimationGenerator::PrepareTracks(const USkeleton* Skeleton, FTracks& OutTracks)
 {
 	OutTracks.IsReady = false;
 
@@ -64,8 +64,8 @@ void FRuntimeAnimationGenerator::PrepareTracks(USkeleton* Skeleton, FTracks& Out
 	{
 		checkf(Track.KeyFrames.Num() > 0, TEXT("No empty tracks at this point"));
 
-		const bool NeedZeroFrame = Track.KeyFrames[0].Time != 0.0;
-		if (NeedZeroFrame)
+		// NeedZeroFrame
+		if (Track.KeyFrames[0].Time != 0.0)
 		{
 			if (FMath::IsNearlyEqual(Track.KeyFrames[0].Time, 0.0f))
 			{
