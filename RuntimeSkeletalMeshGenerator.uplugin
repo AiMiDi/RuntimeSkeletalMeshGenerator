@@ -18,7 +18,12 @@
 		{
 			"Name": "RuntimeSkeletalMeshGenerator",
 			"Type": "Runtime",
-			"LoadingPhase": "PreEarlyLoadingScreen"
+			"LoadingPhase": "Default"
+		},
+		{
+			"Name": "RuntimeAnimationGenerator",
+			"Type": "Runtime",
+			"LoadingPhase": "Default"
 		}
 	]
 }

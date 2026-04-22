@@ -1,22 +1,21 @@
 /******************************************************************************/
-/* SkeletalMeshComponent Generator for UE5.3                                 */
+/* Skeletal mesh generation utilities for UE5.3                              */
 /* -------------------------------------------------------------------------- */
 /* License MIT                                                                */
 /* Kindly sponsored by IMVU                                                   */
 /* -------------------------------------------------------------------------- */
-/* This is a header only library that simplify the process of creating a      */
-/* `USkeletalMeshComponent`, with many surfaces, at runtime.                  */
-/* You can just pass all the surfaces' data, this library will take care to   */
-/* correctly populate the UE4 buffers, needed to have a fully working         */
-/* `USkeletalMeshComponent`.                                                  */
+/* Runtime helpers to create or decompose a skeletal mesh from surface data.  */
 /******************************************************************************/
 #pragma once
 
 #include "CoreMinimal.h"
 #include "Modules/ModuleManager.h"
-#include "Components/SkeletalMeshComponent.h"
-#include "Rendering/SkeletalMeshLODImporterData.h"
-#include "Rendering/SkeletalMeshRenderData.h"
+
+class AActor;
+class UMaterialInterface;
+class USkeletalMesh;
+class USkeletalMeshComponent;
+class USkeleton;
 
 /**
  * Struct for BoneInfluences.

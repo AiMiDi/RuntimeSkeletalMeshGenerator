@@ -1,20 +1,120 @@
 /******************************************************************************/
-/* Animation Generator for UE5.03                                             */
+/* Animation generation utilities for UE5.3                                   */
 /* -------------------------------------------------------------------------- */
 /* License MIT                                                                */
 /* Kindly sponsored by IMVU                                                   */
 /* -------------------------------------------------------------------------- */
-/* This is a header only library that simplify the process of creating a      */
-/* `USkeletalMeshComponent`, with many surfaces, at runtime.                  */
-/* You can just pass all the surfaces' data, this library will take care to   */
-/* correctly populate the UE4 buffers, needed to have a fully working         */
-/* `USkeletalMeshComponent`.                                                  */
+/* Runtime helpers to prepare animation tracks and build a transient sequence.*/
 /******************************************************************************/
 #include "RuntimeAnimationGenerator.h"
 
-#include "AnimSequenceRuntime.h"
+#include "Animation/AnimSequence.h"
+#include "Animation/AnimData/IAnimationDataController.h"
 #include "AnimationUtils.h"
-#include "Animation/AnimSequenceBase.h"
+#include "ReferenceSkeleton.h"
+
+DEFINE_LOG_CATEGORY_STATIC(LogRuntimeAnimationGenerator, Log, All);
+
+namespace
+{
+constexpr double DefaultFrameIntervalSeconds = 1.0 / 30.0;
+constexpr double FrameRatePrecision = 1000000.0;
+
+double ResolveFrameIntervalAndDuration(
+	const TArray<FRuntimeAnimationGenerator::FTrack>& Tracks,
+	double& OutSequenceDuration)
+{
+	double FrameInterval = TNumericLimits<double>::Max();
+	OutSequenceDuration = 0.0;
+
+	for (const FRuntimeAnimationGenerator::FTrack& Track : Tracks)
+	{
+		if (Track.KeyFrames.IsEmpty())
+		{
+			continue;
+		}
+
+		double PreviousFrameTime = Track.KeyFrames[0].Time;
+		OutSequenceDuration = FMath::Max(OutSequenceDuration, PreviousFrameTime);
+
+		for (int32 KeyFrameIndex = 1; KeyFrameIndex < Track.KeyFrames.Num(); ++KeyFrameIndex)
+		{
+			const double CurrentTime = Track.KeyFrames[KeyFrameIndex].Time;
+			const double Delta = CurrentTime - PreviousFrameTime;
+			if (Delta > UE_DOUBLE_KINDA_SMALL_NUMBER)
+			{
+				FrameInterval = FMath::Min(FrameInterval, Delta);
+			}
+
+			OutSequenceDuration = FMath::Max(OutSequenceDuration, CurrentTime);
+			PreviousFrameTime = CurrentTime;
+		}
+	}
+
+	if (FrameInterval == TNumericLimits<double>::Max())
+	{
+		FrameInterval = DefaultFrameIntervalSeconds;
+	}
+
+	return FrameInterval;
+}
+
+FFrameRate MakeFrameRateFromInterval(const double FrameIntervalSeconds)
+{
+	const int64 Denominator = FMath::Clamp<int64>(
+		FMath::RoundToInt64(FrameIntervalSeconds * FrameRatePrecision),
+		1,
+		MAX_uint32);
+	return FFrameRate(static_cast<uint32>(FrameRatePrecision), static_cast<uint32>(Denominator));
+}
+
+void BuildUniformTrackKeys(
+	const FRuntimeAnimationGenerator::FTrack& Track,
+	const int32 NumFrames,
+	const double FrameIntervalSeconds,
+	TArray<FVector3f>& OutPosKeys,
+	TArray<FQuat4f>& OutRotKeys,
+	TArray<FVector3f>& OutScaleKeys)
+{
+	OutPosKeys.SetNumUninitialized(NumFrames);
+	OutRotKeys.SetNumUninitialized(NumFrames);
+	OutScaleKeys.SetNumUninitialized(NumFrames);
+
+	int32 FrameId = 0;
+	int32 NextFrameId = Track.KeyFrames.Num() > 1 ? 1 : 0;
+
+	for (int32 FrameIndex = 0; FrameIndex < NumFrames; ++FrameIndex)
+	{
+		const double Time = FrameIntervalSeconds * static_cast<double>(FrameIndex);
+
+		while (NextFrameId < Track.KeyFrames.Num() && Time >= Track.KeyFrames[NextFrameId].Time)
+		{
+			FrameId = NextFrameId;
+			NextFrameId = FMath::Min(NextFrameId + 1, Track.KeyFrames.Num() - 1);
+			if (NextFrameId == FrameId)
+			{
+				break;
+			}
+		}
+
+		const FRuntimeAnimationGenerator::FKeyFrame& Frame0 = Track.KeyFrames[FrameId];
+		const FRuntimeAnimationGenerator::FKeyFrame& Frame1 = Track.KeyFrames[NextFrameId];
+
+		if (FrameId == NextFrameId || FMath::IsNearlyEqual(Frame0.Time, Frame1.Time))
+		{
+			OutPosKeys[FrameIndex] = FVector3f(Frame0.Position);
+			OutRotKeys[FrameIndex] = FQuat4f(Frame0.Rotation);
+			OutScaleKeys[FrameIndex] = FVector3f(Frame0.Scale);
+			continue;
+		}
+
+		const double Alpha = FMath::Clamp((Time - Frame0.Time) / (Frame1.Time - Frame0.Time), 0.0, 1.0);
+		OutPosKeys[FrameIndex] = FVector3f(FMath::Lerp(Frame0.Position, Frame1.Position, Alpha));
+		OutRotKeys[FrameIndex] = FQuat4f(FQuat::Slerp(Frame0.Rotation, Frame1.Rotation, Alpha));
+		OutScaleKeys[FrameIndex] = FVector3f(FMath::Lerp(Frame0.Scale, Frame1.Scale, Alpha));
+	}
+}
+} // namespace
 
 void FRuntimeAnimationGeneratorModule::StartupModule()
 {
@@ -24,12 +124,15 @@ void FRuntimeAnimationGeneratorModule::ShutdownModule()
 {
 }
 
-FRuntimeAnimationGenerator::FKeyFrame::FKeyFrame(const double Time, const FVector& Position, const FQuat& Rotation,
-	const FVector& Scale):
-	Time(Time),
-	Position(Position),
-	Rotation(Rotation),
-	Scale(Scale)
+FRuntimeAnimationGenerator::FKeyFrame::FKeyFrame(
+	const double Time,
+	const FVector& Position,
+	const FQuat& Rotation,
+	const FVector& Scale)
+	: Time(Time)
+	, Position(Position)
+	, Rotation(Rotation)
+	, Scale(Scale)
 {
 }
 
@@ -39,179 +142,140 @@ void FRuntimeAnimationGenerator::PrepareSkeletonTracks(const USkeleton* Skeleton
 {
 	OutTracks.IsReady = false;
 
-	// Delete the empty tracks and wrong BoneName.
-	for (int32 I = OutTracks.Tracks.Num() - 1; I >= 0; I -= 1)
+	if (Skeleton == nullptr)
 	{
-		const FName& BoneName = OutTracks.Tracks[I].BoneName;
-		if (OutTracks.Tracks[I].KeyFrames.Num() == 0 ||
-		    Skeleton->GetReferenceSkeleton().FindBoneIndex(BoneName) == INDEX_NONE)
+		UE_LOG(LogRuntimeAnimationGenerator, Warning, TEXT("PrepareSkeletonTracks requires a valid skeleton."));
+		OutTracks.Tracks.Reset();
+		return;
+	}
+
+	const FReferenceSkeleton& ReferenceSkeleton = Skeleton->GetReferenceSkeleton();
+
+	for (int32 TrackIndex = OutTracks.Tracks.Num() - 1; TrackIndex >= 0; --TrackIndex)
+	{
+		const FTrack& Track = OutTracks.Tracks[TrackIndex];
+		if (Track.KeyFrames.IsEmpty() || ReferenceSkeleton.FindBoneIndex(Track.BoneName) == INDEX_NONE)
 		{
-			OutTracks.Tracks.RemoveAt(I);
+			OutTracks.Tracks.RemoveAt(TrackIndex);
 		}
 	}
 
-	// Delete duplicate KeyFrames
-	for (int32 I = OutTracks.Tracks.Num() - 1; I >= 0; I -= 1)
-	{
-		for (int32 Y = OutTracks.Tracks[I].KeyFrames.Num() - 1; Y > 0; Y -= 1)
-		{
-			if (OutTracks.Tracks[I].KeyFrames[Y].Time == OutTracks.Tracks[I].KeyFrames[Y - 1].Time)
-			{
-				OutTracks.Tracks[I].KeyFrames.RemoveAt(Y);
-			}
-		}
-	}
-
-	// Sort the tracks.
 	for (FTrack& Track : OutTracks.Tracks)
 	{
 		Track.KeyFrames.Sort();
-	}
 
-	// Make sure we have the frame 0.
-	for (FTrack& Track : OutTracks.Tracks)
-	{
-		checkf(Track.KeyFrames.Num() > 0, TEXT("No empty tracks at this point"));
-
-		// NeedZeroFrame
-		if (Track.KeyFrames[0].Time != 0.0)
+		for (int32 KeyFrameIndex = Track.KeyFrames.Num() - 1; KeyFrameIndex > 0; --KeyFrameIndex)
 		{
-			if (FMath::IsNearlyEqual(Track.KeyFrames[0].Time, 0.0f))
+			if (Track.KeyFrames[KeyFrameIndex].Time == Track.KeyFrames[KeyFrameIndex - 1].Time)
 			{
-				Track.KeyFrames[0].Time = 0.0;
+				Track.KeyFrames.RemoveAt(KeyFrameIndex);
 			}
-			else
-			{
-				FKeyFrame ZeroFrame(Track.KeyFrames[0]);
-				ZeroFrame.Time = 0.0;
-				Track.KeyFrames.Insert(ZeroFrame, 0);
-			}
+		}
+
+		if (Track.KeyFrames.IsEmpty())
+		{
+			continue;
+		}
+
+		if (!FMath::IsNearlyZero(Track.KeyFrames[0].Time))
+		{
+			FKeyFrame ZeroFrame = Track.KeyFrames[0];
+			ZeroFrame.Time = 0.0;
+			Track.KeyFrames.Insert(ZeroFrame, 0);
+		}
+		else
+		{
+			Track.KeyFrames[0].Time = 0.0;
 		}
 	}
 
 	OutTracks.IsReady = true;
 }
 
-UAnimSequence* FRuntimeAnimationGenerator::GenerateSkeletonAnimSequence(USkeleton* Skeleton, const FTracks& TracksContainer, UObject* Outer)
+UAnimSequence* FRuntimeAnimationGenerator::GenerateSkeletonAnimSequence(
+	USkeleton* Skeleton,
+	const FTracks& TracksContainer,
+	UObject* Outer)
 {
-	if (!ensureAlwaysMsgf(TracksContainer.IsReady, TEXT("Please call `PrepareTracks` before this function.")))
+	if (Skeleton == nullptr)
 	{
+		UE_LOG(LogRuntimeAnimationGenerator, Warning, TEXT("GenerateSkeletonAnimSequence requires a valid skeleton."));
+		return nullptr;
+	}
+
+	if (!TracksContainer.IsReady)
+	{
+		UE_LOG(LogRuntimeAnimationGenerator, Warning, TEXT("GenerateSkeletonAnimSequence requires PrepareSkeletonTracks to be called first."));
 		return nullptr;
 	}
 
 	const TArray<FTrack>& Tracks = TracksContainer.Tracks;
-
-	if (Tracks.Num() == 0)
+	if (Tracks.IsEmpty())
 	{
-		// Nothing to do!
 		return nullptr;
 	}
 
-	TArray<int32> TrackIndices;
-	TrackIndices.Reserve(Tracks.Num());
+#if !WITH_EDITOR
+	UE_LOG(LogRuntimeAnimationGenerator, Warning, TEXT("GenerateSkeletonAnimSequence is only supported in editor builds."));
+	return nullptr;
+#else
+	UObject* EffectiveOuter = Outer != nullptr ? Outer : GetTransientPackage();
+	UAnimSequence* Anim = NewObject<UAnimSequence>(EffectiveOuter);
+	if (Anim == nullptr)
+	{
+		return nullptr;
+	}
 
-	UAnimSequence* Anim = NewObject<UAnimSequence>(Outer);
-
-	// ~~ Initialize the Animation ~~
 	Anim->BoneCompressionSettings = FAnimationUtils::GetDefaultAnimationRecorderBoneCompressionSettings();
 	Anim->SetSkeleton(Skeleton);
-	Anim->SetSequenceLength(0.f);
-	Anim->SetRawNumberOfFrame(0);
 
-	// ~~ Initialize the Animation tracks ~~
-	TArray<FName> RuntimeAnimationTrackNames;
-	for (const FTrack& Track : Tracks)
-	{
-		// Pass `nullptr` so we can initialize it later.
-		// It's safe to cast to `AnimSequenceRuntime` since it doesn't add any member.
-		TrackIndices.Push(static_cast<UAnimSequenceRuntime*>(Anim)->AddNewRawTrackRuntime(Track.BoneName, nullptr, RuntimeAnimationTrackNames));
-	}
-#if WITH_EDITOR
-	// ~~ Init notifies ~~
-	Anim->InitializeNotifyTrack();
-#endif
-	// ~~ First find the sequence duration and frame interval. ~~
-	double FrameInterval = FLT_MAX;
 	double SequenceDuration = 0.0;
+	const double FrameIntervalSeconds = ResolveFrameIntervalAndDuration(Tracks, SequenceDuration);
+	const int32 NumKeys = SequenceDuration > 0.0
+		? FMath::Max(1, FMath::CeilToInt(SequenceDuration / FrameIntervalSeconds) + 1)
+		: 1;
+	const int32 NumFrames = FMath::Max(0, NumKeys - 1);
+	const FFrameRate FrameRate = MakeFrameRateFromInterval(FrameIntervalSeconds);
+
+	IAnimationDataController& Controller = Anim->GetController();
+	IAnimationDataController::FScopedBracket ScopedBracket(
+		Controller,
+		FText::FromString(TEXT("Generating runtime animation sequence")),
+		false);
+
+	Controller.InitializeModel();
+	Controller.SetFrameRate(FrameRate, false);
+	Controller.SetNumberOfFrames(FFrameNumber(NumFrames), false);
+	Anim->InitializeNotifyTrack();
+
 	for (const FTrack& Track : Tracks)
 	{
-		double PreviousFrameTime = Track.KeyFrames[0].Time;
-		for (int32 i = 1; i < Track.KeyFrames.Num(); i += 1)
-		{
-			const FKeyFrame& Frame = Track.KeyFrames[i];
+		TArray<FVector3f> PosKeys;
+		TArray<FQuat4f> RotKeys;
+		TArray<FVector3f> ScaleKeys;
+		BuildUniformTrackKeys(Track, NumKeys, FrameIntervalSeconds, PosKeys, RotKeys, ScaleKeys);
 
-			checkf(PreviousFrameTime < Frame.Time, TEXT("At this point this can't go backward."));
-			const double Delta = Frame.Time - PreviousFrameTime;
-			checkf(Delta != 0.0, TEXT("This can't never happen at this point."));
-			FrameInterval = FMath::Min(FrameInterval, Delta);
-			SequenceDuration = FMath::Max(Frame.Time, SequenceDuration);
-			PreviousFrameTime = Frame.Time;
+		if (!Controller.AddBoneCurve(Track.BoneName, false))
+		{
+			UE_LOG(LogRuntimeAnimationGenerator, Warning, TEXT("Failed to add bone curve '%s'."), *Track.BoneName.ToString());
+			return nullptr;
+		}
+
+		if (!Controller.SetBoneTrackKeys(Track.BoneName, PosKeys, RotKeys, ScaleKeys, false))
+		{
+			UE_LOG(LogRuntimeAnimationGenerator, Warning, TEXT("Failed to set keys for bone curve '%s'."), *Track.BoneName.ToString());
+			return nullptr;
 		}
 	}
 
-	// `+ 1` to add the frame 0.
-	const uint32 NumFrames = (FrameInterval == 0.0 ? 0 : FMath::CeilToInt(SequenceDuration / FrameInterval)) + 1;
-	// This is needed to avoid skip the last frame in case of precision loss.
-	SequenceDuration = (NumFrames - 1) * FrameInterval;
+	Controller.NotifyPopulated();
 
-	// ~~ Fill the animation tracks ~~
-
-	for (int32 TrackId = 0; TrackId < Tracks.Num(); TrackId += 1)
+	if (Anim->GetOutermost() != GetTransientPackage())
 	{
-		const int32 TrackIndex = TrackIndices[TrackId];
-		const FTrack& Track = Tracks[TrackId];
-
-		FRawAnimSequenceTrack& AnimTrack = Anim->GetRawAnimationTrack(TrackIndex);
-		AnimTrack.PosKeys.SetNum(NumFrames);
-		AnimTrack.RotKeys.SetNum(NumFrames);
-		AnimTrack.ScaleKeys.SetNum(NumFrames);
-
-		uint32 FrameId = 0;
-		uint32 NextFrameId = FrameId + 1 >= static_cast<uint32>(Track.KeyFrames.Num()) ? FrameId : (FrameId + 1);
-		for (uint32 FrameIndex = 0; FrameIndex < NumFrames; FrameIndex += 1)
-		{
-			const double Time = FrameInterval * static_cast<double>(FrameIndex);
-
-			if (NextFrameId < static_cast<uint32>(Track.KeyFrames.Num()))
-			{
-				if (Time >= Track.KeyFrames[NextFrameId].Time)
-				{
-					// Time to advance to the next frame.
-					FrameId = NextFrameId;
-					NextFrameId = FrameId + 1 >= static_cast<uint32>(Track.KeyFrames.Num()) ? FrameId : (FrameId + 1);
-				}
-			}
-
-			if (FrameId == NextFrameId)
-			{
-				// This is the last frame, nothing to interpolate.
-				const FKeyFrame& Frame = Track.KeyFrames[FrameId];
-				AnimTrack.PosKeys[FrameIndex] = FVector3f(Frame.Position);
-				AnimTrack.RotKeys[FrameIndex] = FQuat4f(Frame.Rotation);
-				AnimTrack.ScaleKeys[FrameIndex] = FVector3f(Frame.Scale);
-			}
-			else
-			{
-				const FKeyFrame& Frame1 = Track.KeyFrames[FrameId];
-				const FKeyFrame& Frame2 = Track.KeyFrames[NextFrameId];
-
-				checkf(Frame1.Time < Frame2.Time, TEXT("This is is impossible because the `Prepare` clears all the duplicate key frames."));
-				const auto Alpha = FMath::Clamp((Time - Frame1.Time) / (Frame2.Time - Frame1.Time), 0.0, 1.0);
-
-				AnimTrack.PosKeys[FrameIndex] = FVector3f(FMath::Lerp(Frame1.Position, Frame2.Position, Alpha));
-				AnimTrack.RotKeys[FrameIndex] = FQuat4f(FQuat::Slerp(Frame1.Rotation, Frame2.Rotation, Alpha));
-				AnimTrack.ScaleKeys[FrameIndex] = FVector3f(FMath::Lerp(Frame1.Scale, Frame2.Scale, Alpha));
-			}
-		}
+		Anim->CacheDerivedDataForCurrentPlatform();
+		Anim->MarkPackageDirty();
 	}
-
-	// ~~ Finalize the animation ~~
-	Anim->SetRawNumberOfFrame(NumFrames);
-	Anim->SetSequenceLength(SequenceDuration);
-#if WITH_EDITOR
-	Anim->PostProcessSequence();
-#endif
-	Anim->MarkPackageDirty();
 
 	return Anim;
+#endif
 }

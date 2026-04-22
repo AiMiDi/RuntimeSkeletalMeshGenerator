@@ -1,15 +1,18 @@
-# Runtime Skeletal Mesh Generator for UE5
-Helper to create a SkeletalMeshComponent in UE5 at runtime.
+# Runtime Skeletal Mesh Generator for UE5.3
+Helpers to create skeletal meshes and animation sequences in UE5.3.
 
-This is a UE4 plugin that simplify the process of creating a `USkeletalMeshComponent`, with many surfaces, at runtime.
-You can just pass all the surfaces' data, this library will take care to correctly populate the UE5 buffers, needed to have a fully working `USkeletalMeshComponent`.
+This plugin contains two runtime modules:
+- `RuntimeSkeletalMeshGenerator`: build and decompose `USkeletalMesh` data from surfaces at runtime.
+- `RuntimeAnimationGenerator`: prepare tracks and generate transient `UAnimSequence` assets in editor builds.
+
+You can pass surface or track data directly and let the plugin populate the UE5.3 data structures needed for runtime use.
 
 ## How to use it
 
 To use this library:
 1. Add this plugin inside the UE5 game plugins folder.
 2. Specify `RuntimeSkeletalMeshGenerator` as plugin on your `Game.uproject`, to enable it.
-3. Import the plugin using `#include "RuntimeSkeletalMeshGenerator/RuntimeSkeletalMeshGenerator.h"`
+3. Import the module you need using `#include "RuntimeSkeletalMeshGenerator.h"` or `#include "RuntimeAnimationGenerator.h"`
 
 The plugin is ready to be used, here an example on how to use it:
 ```c++
@@ -75,6 +78,14 @@ void YourAmazingFunction()
 ## Support
 
 If you need any help, please post a question on the [Discussions page](https://github.com/AndreaCatania/RuntimeSkeletalMeshGenerator/discussions); and if you find a bug please consider to report it on the [Issues page](https://github.com/AndreaCatania/RuntimeSkeletalMeshGenerator/issues)
+
+## Tests
+
+Automation tests are registered under the `RuntimeSkeletalMeshGenerator.Unit.*` prefix and can be run from Session Frontend or with:
+
+```powershell
+UnrealEditor-Cmd.exe D:\code\D5\FusionEffectBuild\d5_immerse.uproject -ExecCmds="Automation RunTests RuntimeSkeletalMeshGenerator.Unit; Quit"
+```
 
 ---
 

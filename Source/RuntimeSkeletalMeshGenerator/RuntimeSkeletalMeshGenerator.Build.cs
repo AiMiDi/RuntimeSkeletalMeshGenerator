@@ -6,12 +6,17 @@ public class RuntimeSkeletalMeshGenerator : ModuleRules
 	{
 		PCHUsage = ModuleRules.PCHUsageMode.UseExplicitOrSharedPCHs;
 
-		PrivateDependencyModuleNames.AddRange(
+		PublicDependencyModuleNames.AddRange(
 			new string[]
 			{
 				"Core",
 				"CoreUObject",
 				"Engine",
+			});
+
+		PrivateDependencyModuleNames.AddRange(
+			new string[]
+			{
 				"RenderCore",
 				"RHI",
 			});

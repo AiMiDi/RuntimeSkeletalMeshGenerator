@@ -13,5 +13,10 @@ public class RuntimeAnimationGenerator : ModuleRules
 				"CoreUObject",
 				"Engine",
 			});
+
+		if (Target.bBuildEditor)
+		{
+			PrivateDependencyModuleNames.Add("AnimationDataController");
+		}
 	}
 }

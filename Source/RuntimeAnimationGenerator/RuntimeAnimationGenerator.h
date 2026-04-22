@@ -1,21 +1,18 @@
 /******************************************************************************/
-/* Animation Generator for UE5.03                                             */
+/* Animation generation utilities for UE5.3                                   */
 /* -------------------------------------------------------------------------- */
 /* License MIT                                                                */
 /* Kindly sponsored by IMVU                                                   */
 /* -------------------------------------------------------------------------- */
-/* This is a header only library that simplify the process of creating a      */
-/* `USkeletalMeshComponent`, with many surfaces, at runtime.                  */
-/* You can just pass all the surfaces' data, this library will take care to   */
-/* correctly populate the UE4 buffers, needed to have a fully working         */
-/* `USkeletalMeshComponent`.                                                  */
+/* Runtime helpers to prepare animation tracks and build a transient sequence.*/
 /******************************************************************************/
 #pragma once
 
 #include "CoreMinimal.h"
 #include "Modules/ModuleManager.h"
-#include "Components/SkeletalMeshComponent.h"
 
+class UAnimSequence;
+class UObject;
 class USkeleton;
 
 class RUNTIMEANIMATIONGENERATOR_API FRuntimeAnimationGeneratorModule : public IModuleInterface
